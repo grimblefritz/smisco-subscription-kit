@@ -1,0 +1,22 @@
+# Composer
+/vendor/
+/composer.lock
+
+# PHPUnit
+/.phpunit.cache/
+/.phpunit.result.cache
+
+# Claude Code (project settings shared; local user settings ignored)
+/.claude/settings.local.json
+/CLAUDE.md
+
+# Local scratch directory
+/working/
+
+# OS / editor junk
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/

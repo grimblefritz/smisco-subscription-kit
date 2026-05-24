@@ -1,0 +1,243 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Simnuxco\SubscriptionKit;
+
+use Stripe\Webhook;
+use Stripe\Event;
+use Stripe\Subscription as StripeSubscription;
+use Stripe\Checkout\Session as CheckoutSession;
+use Stripe\Invoice;
+
+/**
+ * Stripe webhook receiver. Hosts wire a thin endpoint that:
+ *
+ *   1. Reads the raw POST body and the Stripe-Signature header.
+ *   2. Begins a DB transaction.
+ *   3. Calls handle($payload, $signature).
+ *   4. Commits on success, rolls back on failure (per the returned
+ *      WebhookResult's httpStatus).
+ *   5. Emits the HTTP status + JSON body from the result.
+ *
+ * The receiver itself does NOT manage transactions — that's the host's
+ * job. Reason: the package shouldn't know about the host's DB driver,
+ * and the idempotency-mark-then-handler pattern only works atomically
+ * when both runs in the same transaction.
+ *
+ * Event coverage matches SPV's pre-extraction handler:
+ *   - checkout.session.completed        → upsert sub + setStatus active + optional onCheckoutHook + (one-off) cancel_at_period_end patch
+ *   - customer.subscription.created     → upsert sub (idempotent)
+ *   - customer.subscription.updated     → upsert sub
+ *   - customer.subscription.deleted     → markEnded
+ *   - customer.subscription.trial_will_end → onTrialEnding
+ *   - invoice.payment_failed            → defensive past_due via upsert
+ *   - invoice.paid                      → log + no-op (subscription.updated covers)
+ *   - any other event type              → log + 200 OK (so Stripe stops retrying)
+ */
+final class WebhookReceiver
+{
+    public function __construct(
+        private readonly string $webhookSecret,
+        private readonly StripeClient $client,           // SDK init proof
+        private readonly SkuConfig $skus,
+        private readonly EventIdempotencyStore $events,
+        private readonly SubscriptionStore $subscriptions,
+        private readonly UserStore $users,
+        private readonly ?CheckoutHook $checkoutHook = null,
+    ) {
+        if ($webhookSecret === '') {
+            throw new \InvalidArgumentException('WebhookReceiver: webhookSecret is empty');
+        }
+    }
+
+    public function handle(string $payload, string $signatureHeader): WebhookResult
+    {
+        if ($payload === '') {
+            return new WebhookResult(400, ['error' => 'empty payload']);
+        }
+
+        try {
+            $event = Webhook::constructEvent($payload, $signatureHeader, $this->webhookSecret);
+        } catch (\UnexpectedValueException $e) {
+            error_log('WebhookReceiver: invalid payload — ' . $e->getMessage());
+            return new WebhookResult(400, ['error' => 'invalid payload']);
+        } catch (\Stripe\Exception\SignatureVerificationException $e) {
+            error_log('WebhookReceiver: signature verification failed — ' . $e->getMessage());
+            return new WebhookResult(400, ['error' => 'signature verification failed']);
+        }
+
+        // Idempotency: mark the event id before doing work. If already
+        // recorded, this delivery is a re-fire of one we processed —
+        // skip. (Host wraps the whole handle() call in a transaction, so
+        // a handler failure rolls back this mark too; Stripe redelivery
+        // then runs cleanly.)
+        if (!$this->events->recordEvent((string)$event->id, (string)$event->type)) {
+            error_log('WebhookReceiver: duplicate event ' . $event->id . ' (' . $event->type . ') — skipped');
+            return new WebhookResult(200, ['received' => true, 'duplicate' => true], duplicate: true);
+        }
+
+        try {
+            $this->dispatch($event);
+        } catch (\Throwable $e) {
+            error_log(
+                'WebhookReceiver: handler error on ' . $event->type
+                . ' (event=' . $event->id . ') — ' . $e->getMessage()
+            );
+            return new WebhookResult(500, ['error' => 'handler error']);
+        }
+
+        return new WebhookResult(200, ['received' => true]);
+    }
+
+    private function dispatch(Event $event): void
+    {
+        switch ($event->type) {
+            case 'checkout.session.completed':
+                $this->handleCheckoutCompleted($event->data->object);
+                return;
+            case 'customer.subscription.created':
+            case 'customer.subscription.updated':
+                $this->handleSubscriptionUpsert($event->data->object);
+                return;
+            case 'customer.subscription.deleted':
+                $this->subscriptions->markEnded((string)$event->data->object->id);
+                return;
+            case 'customer.subscription.trial_will_end':
+                $this->subscriptions->onTrialEnding((string)$event->data->object->id);
+                return;
+            case 'invoice.payment_failed':
+                $this->handleInvoiceFailed($event->data->object);
+                return;
+            case 'invoice.paid':
+                error_log('WebhookReceiver: invoice.paid ' . ($event->data->object->id ?? '?'));
+                return;
+            default:
+                // 200 OK for unknown event types so Stripe stops retrying.
+                error_log('WebhookReceiver: ignoring event type ' . $event->type);
+                return;
+        }
+    }
+
+    private function handleCheckoutCompleted(CheckoutSession $session): void
+    {
+        $user_id  = isset($session->metadata->user_id) ? (int)$session->metadata->user_id : null;
+        $sku_code = $session->metadata->sku_code ?? null;
+        $sub_id   = $session->subscription ?? null;
+
+        if (!$user_id || !$sub_id || !$sku_code) {
+            error_log(
+                'WebhookReceiver: checkout.session.completed missing metadata/subscription '
+                . '(session=' . $session->id . ')'
+            );
+            return;
+        }
+
+        // Fetch the live subscription to get authoritative status, period
+        // timestamps, and price (so we can verify and persist).
+        $live = StripeSubscription::retrieve((string)$sub_id);
+        $state = SubscriptionState::fromStripeSubscription($live, (string)$sku_code);
+        $this->subscriptions->upsert($state, $user_id);
+
+        // Host hook (SPV uses this to lazily create the buyers row).
+        if ($this->checkoutHook !== null) {
+            $this->checkoutHook->afterCheckoutCompleted($session, $user_id);
+        }
+
+        // Flip user.status to 'active' (was 'pending' after registration).
+        // Idempotent — repeated deliveries hit the same target state.
+        if ($this->users->getStatus($user_id) === 'pending') {
+            $this->users->setStatus($user_id, 'active');
+        }
+
+        // One-off SKU? Patch the Stripe Subscription with cancel_at_period_end.
+        // Stripe re-fires customer.subscription.updated, which mirrors the
+        // flag into our SubscriptionStore via the next pass through this
+        // receiver. This Stripe API call sits INSIDE the host's
+        // transaction by design: if it throws, the outer dispatcher rolls
+        // back our DB work and Stripe redelivery retries cleanly. If it
+        // succeeds but COMMIT later fails, Stripe's own idempotency keeps
+        // a redelivery from double-patching.
+        if ($this->skus->has((string)$sku_code) && $this->skus->isOneoff((string)$sku_code)) {
+            StripeSubscription::update((string)$sub_id, ['cancel_at_period_end' => true]);
+        }
+    }
+
+    private function handleSubscriptionUpsert(StripeSubscription $sub): void
+    {
+        // user_id resolution (mirrors the SPV webhook's fallback):
+        //   1. subscription.metadata.user_id (canonical write path)
+        //   2. lookup users.stripe_customer_id = subscription.customer
+        $user_id = isset($sub->metadata->user_id) ? (int)$sub->metadata->user_id : null;
+        if (!$user_id) {
+            $found = $this->subscriptions->findByCustomerId((string)$sub->customer);
+            // SubscriptionState doesn't carry user_id; the SubscriptionStore
+            // does. Best we can do here is bail with a log — SPV's pre-
+            // extraction code also bailed in this case.
+            if ($found === null) {
+                error_log(
+                    'WebhookReceiver: subscription event missing user_id; no local row '
+                    . '(sub=' . $sub->id . ', customer=' . $sub->customer . ')'
+                );
+                return;
+            }
+            // We have a local row but the package interface doesn't
+            // surface user_id. Re-fetch by going through the host's
+            // UserStore via stripe_customer_id is not in the interface
+            // either. Document this as a known-limitation: hosts that
+            // want to handle subs missing user_id metadata should either
+            // (a) ensure metadata is set at creation (the
+            // CheckoutService does this), or (b) extend their Store with
+            // an out-of-interface helper. For SPV, metadata is always
+            // set, so this path is defensive only.
+            error_log('WebhookReceiver: cannot resolve user_id without metadata (sub=' . $sub->id . ')');
+            return;
+        }
+
+        // SKU resolution: metadata first, then price-id reverse lookup,
+        // matching the webhook's pre-extraction precedence.
+        $sku = null;
+        $metadataCode = $sub->metadata->sku_code ?? '';
+        if ($metadataCode === '') {
+            $priceId = $sub->items->data[0]->price->id ?? null;
+            if ($priceId !== null) {
+                $sku = $this->skus->codeForPriceId($priceId);
+            }
+        }
+        $state = SubscriptionState::fromStripeSubscription($sub, $sku);
+
+        if ($state->skuCode === '') {
+            error_log('WebhookReceiver: subscription event has no resolvable sku_code (sub=' . $sub->id . ')');
+            return;
+        }
+
+        $this->subscriptions->upsert($state, $user_id);
+    }
+
+    private function handleInvoiceFailed(Invoice $invoice): void
+    {
+        $sub_id = $invoice->subscription ?? null;
+        if (!$sub_id) return;
+
+        // Look up the local row to preserve everything else, then upsert
+        // with status=past_due. The pre-extraction code did a targeted
+        // `UPDATE subscriptions SET status='past_due' WHERE
+        // stripe_subscription_id = :sid` — using upsert here means we
+        // also touch updated_at. Behaviorally equivalent.
+        $existing = $this->subscriptions->findByStripeSubscriptionId((string)$sub_id);
+        if ($existing === null) return;
+
+        $new = new SubscriptionState(
+            stripeSubscriptionId: $existing->stripeSubscriptionId,
+            stripeCustomerId:     $existing->stripeCustomerId,
+            skuCode:              $existing->skuCode,
+            status:               'past_due',
+            currentPeriodStart:   $existing->currentPeriodStart,
+            currentPeriodEnd:     $existing->currentPeriodEnd,
+            cancelAtPeriodEnd:    $existing->cancelAtPeriodEnd,
+        );
+        // user_id sentinel — the row already exists, upsert hits the
+        // ON CONFLICT path which doesn't read user_id.
+        $this->subscriptions->upsert($new, 0);
+    }
+}
