@@ -11,6 +11,8 @@
 - /www
 - /working/
 - /composer.lock
+- /phpunit.xml
+- /tests/
 - /.phpunit.cache/
 - /.phpunit.result.cache
 - /.claude/
