@@ -13,6 +13,9 @@
 # Local scratch directory
 /working/
 
+# Dev-webhost symlink (targets a remote mount; rsynced separately, never committed)
+/www
+
 # OS / editor junk
 .DS_Store
 Thumbs.db
