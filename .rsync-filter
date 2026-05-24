@@ -10,7 +10,7 @@
 - /.rsync-filter
 - /www
 - /working/
-- /vendor/
+- /composer.lock
 - /.phpunit.cache/
 - /.phpunit.result.cache
 - /.claude/
