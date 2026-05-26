@@ -1,0 +1,33 @@
+GETTING STARTED WITH SUBSCRIPTION KIT
+======================================
+
+Requirements: PHP 8.1+, Composer.
+
+
+1. Clone the repository next to your app:
+
+       cd ~/code
+       git clone https://github.com/grimblefritz/stripe-subscription-kit.git
+
+
+2. In your app's composer.json, add a path repository and require
+   the package:
+
+       "repositories": [
+           {"type": "path", "url": "../stripe-subscription-kit"}
+       ],
+       "require": {
+           "simnuxco/subscription-kit": "@dev"
+       }
+
+   Adjust the relative path to match your layout.
+
+
+3. Install:
+
+       composer update simnuxco/subscription-kit
+
+
+Everything else — configuration, wiring, webhooks, access gating,
+admin operations — is in README.md inside the subscription-kit
+directory.
