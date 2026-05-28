@@ -8,6 +8,7 @@ use Stripe\Webhook;
 use Stripe\Event;
 use Stripe\Subscription as StripeSubscription;
 use Stripe\Checkout\Session as CheckoutSession;
+use Stripe\Customer as StripeCustomer;
 use Stripe\Invoice;
 
 /**
@@ -165,33 +166,45 @@ final class WebhookReceiver
 
     private function handleSubscriptionUpsert(StripeSubscription $sub): void
     {
-        // user_id resolution (mirrors the SPV webhook's fallback):
-        //   1. subscription.metadata.user_id (canonical write path)
-        //   2. lookup users.stripe_customer_id = subscription.customer
+        // user_id resolution, in order of preference:
+        //   1. subscription.metadata.user_id (canonical write path —
+        //      CheckoutService always sets this).
+        //   2. local row already keyed by customer_id — use the 0
+        //      sentinel since upsert hits ON CONFLICT and ignores
+        //      user_id (same pattern as handleInvoiceFailed /
+        //      AdminActions).
+        //   3. Stripe Customer email → UserStore::findUserIdByEmail —
+        //      handles subs created outside the host (Stripe Dashboard,
+        //      migrations, manual API calls). One extra Stripe API call,
+        //      only on this fallback.
         $user_id = isset($sub->metadata->user_id) ? (int)$sub->metadata->user_id : null;
         if (!$user_id) {
             $found = $this->subscriptions->findByCustomerId((string)$sub->customer);
-            // SubscriptionState doesn't carry user_id; the SubscriptionStore
-            // does. Best we can do here is bail with a log — SPV's pre-
-            // extraction code also bailed in this case.
-            if ($found === null) {
-                error_log(
-                    'WebhookReceiver: subscription event missing user_id; no local row '
-                    . '(sub=' . $sub->id . ', customer=' . $sub->customer . ')'
-                );
-                return;
+            if ($found !== null) {
+                $user_id = 0;
+            } else {
+                $resolved = null;
+                try {
+                    $customer = StripeCustomer::retrieve((string)$sub->customer);
+                    $email = $customer->email ?? null;
+                    if ($email) {
+                        $resolved = $this->users->findUserIdByEmail((string)$email);
+                    }
+                } catch (\Throwable $e) {
+                    error_log(
+                        'WebhookReceiver: customer email lookup failed '
+                        . '(sub=' . $sub->id . ', customer=' . $sub->customer . ') — ' . $e->getMessage()
+                    );
+                }
+                if (!$resolved) {
+                    error_log(
+                        'WebhookReceiver: subscription event missing user_id; unable to resolve '
+                        . '(sub=' . $sub->id . ', customer=' . $sub->customer . ')'
+                    );
+                    return;
+                }
+                $user_id = $resolved;
             }
-            // We have a local row but the package interface doesn't
-            // surface user_id. Re-fetch by going through the host's
-            // UserStore via stripe_customer_id is not in the interface
-            // either. Document this as a known-limitation: hosts that
-            // want to handle subs missing user_id metadata should either
-            // (a) ensure metadata is set at creation (the
-            // CheckoutService does this), or (b) extend their Store with
-            // an out-of-interface helper. For SPV, metadata is always
-            // set, so this path is defensive only.
-            error_log('WebhookReceiver: cannot resolve user_id without metadata (sub=' . $sub->id . ')');
-            return;
         }
 
         // SKU resolution: metadata first, then price-id reverse lookup,
