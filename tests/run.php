@@ -157,7 +157,15 @@ namespace {
             $rm = new \ReflectionMethod($class, $method);
             if ($rm->getDeclaringClass()->getName() === \PHPUnit\Framework\TestCase::class) continue;
             $instance = new $class();
+            // Mirror PHPUnit's setUp/tearDown lifecycle. The stub
+            // TestCase doesn't declare them, so we sniff via
+            // method_exists on the concrete subclass.
+            $hasSetUp    = method_exists($instance, 'setUp');
+            $hasTearDown = method_exists($instance, 'tearDown');
             try {
+                if ($hasSetUp) {
+                    (function () { $this->setUp(); })->call($instance);
+                }
                 $instance->$method();
                 if ($instance->_hasExpectedException()) {
                     $expected = $instance->_expectedException();
@@ -177,6 +185,15 @@ namespace {
                     $messages[] = "$class::$method  ERROR  " . get_class($t) . ': ' . $t->getMessage();
                 }
             } finally {
+                if ($hasTearDown) {
+                    try {
+                        (function () { $this->tearDown(); })->call($instance);
+                    } catch (\Throwable $tdEx) {
+                        // Don't let tearDown failures mask the original
+                        // outcome; just surface them as messages.
+                        $messages[] = "$class::$method  TEARDOWN  " . $tdEx->getMessage();
+                    }
+                }
                 $instance->_resetExpectedException();
             }
         }
