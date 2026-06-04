@@ -14,7 +14,7 @@ Requirements: PHP 8.1+, Composer.
    the package:
 
        "repositories": [
-           {"type": "path", "url": "../stripe-subscription-kit"}
+           {"type": "path", "url": "../stripe-subscription-kit/public"}
        ],
        "require": {
            "simnuxco/subscription-kit": "@dev"

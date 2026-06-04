@@ -55,7 +55,7 @@ In your app's `composer.json`, add the repository and require the package:
 ```json
 {
     "repositories": [
-        {"type": "path", "url": "../stripe-subscription-kit"}
+        {"type": "path", "url": "../stripe-subscription-kit/public"}
     ],
     "require": {
         "simnuxco/subscription-kit": "@dev"
