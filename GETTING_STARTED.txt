@@ -4,9 +4,10 @@ GETTING STARTED WITH SUBSCRIPTION KIT
 Requirements: PHP 8.1+, Composer.
 
 
-1. Clone the repository next to your app:
+1. Clone the kit next to your app. It is consumed as a sibling directory,
+   so put it beside your application -- wherever that lives:
 
-       cd ~/code
+       cd /path/to/your/projects     # the directory that holds your app
        git clone https://github.com/grimblefritz/stripe-subscription-kit.git
 
 

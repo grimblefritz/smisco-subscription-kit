@@ -647,4 +647,4 @@ Stripe's Subscription object doesn't inherently know your user ID — it's only 
 
 ## License
 
-Proprietary.
+MIT — see [LICENSE](LICENSE). Copyright (c) 2026 smisco.
