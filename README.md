@@ -44,15 +44,24 @@ What it does _not_ do:
 
 ## Installation
 
-The package is not on Packagist. Install it as a Composer [path repository](https://getcomposer.org/doc/05-repositories.md#path) pointing at your local checkout.
+The package is not on Packagist. Install it from its public GitHub repository using a Composer [VCS repository](https://getcomposer.org/doc/05-repositories.md#vcs) — no local checkout required. In your app's `composer.json`:
 
-Clone the repository:
-
-```bash
-git clone https://github.com/grimblefritz/smisco-subscription-kit.git
+```json
+{
+    "repositories": [
+        {"type": "vcs", "url": "https://github.com/grimblefritz/smisco-subscription-kit.git"}
+    ],
+    "require": {
+        "smisco/subscription-kit": "^0.4"
+    }
+}
 ```
 
-In your app's `composer.json`, add the repository and require the package:
+Then run `composer update smisco/subscription-kit`. Composer reads the package from the repository's tagged releases; pin a version constraint as you would any dependency (`^0.4`, `0.4.*`, etc.). Releases are tagged with SemVer tags (`v0.4.0`, ...) for Composer; the project also carries a parallel `build.ts6` stamp for human reference.
+
+### Local development (path repository)
+
+If you are developing the kit alongside your app and want edits to reflect without re-tagging, use a Composer [path repository](https://getcomposer.org/doc/05-repositories.md#path) pointing at a local checkout of the `public/` directory instead:
 
 ```json
 {

@@ -4,29 +4,38 @@ GETTING STARTED WITH SMISCO SUBSCRIPTION KIT FOR STRIPE
 Requirements: PHP 8.1+, Composer.
 
 
-1. Clone the kit next to your app. It is consumed as a sibling directory,
-   so put it beside your application -- wherever that lives:
+1. In your app's composer.json, add the kit's public GitHub repository as
+   a Composer VCS repository and require it. No local clone is needed:
 
-       cd /path/to/your/projects     # the directory that holds your app
+       "repositories": [
+           {"type": "vcs", "url": "https://github.com/grimblefritz/smisco-subscription-kit.git"}
+       ],
+       "require": {
+           "smisco/subscription-kit": "^0.4"
+       }
+
+   Releases are SemVer-tagged (v0.4.0, ...) for Composer; pin the
+   constraint as you would any dependency.
+
+
+2. Install:
+
+       composer update smisco/subscription-kit
+
+
+   ALTERNATIVE -- local development (path repository):
+   If you are editing the kit alongside your app and want changes to
+   reflect without re-tagging, clone it as a sibling directory and use
+   a path repository instead of the VCS one above:
+
        git clone https://github.com/grimblefritz/smisco-subscription-kit.git
-
-
-2. In your app's composer.json, add a path repository and require
-   the package:
-
+       # then in composer.json:
        "repositories": [
            {"type": "path", "url": "../smisco-subscription-kit/public"}
        ],
        "require": {
            "smisco/subscription-kit": "@dev"
        }
-
-   Adjust the relative path to match your layout.
-
-
-3. Install:
-
-       composer update smisco/subscription-kit
 
 
 Everything else — configuration, wiring, webhooks, access gating,
