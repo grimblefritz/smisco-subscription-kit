@@ -2,11 +2,11 @@
 
 declare(strict_types=1);
 
-namespace Simnuxco\SubscriptionKit\Tests;
+namespace Smisco\SubscriptionKit\Tests;
 
 use PHPUnit\Framework\TestCase;
-use Simnuxco\SubscriptionKit\SkuConfig;
-use Simnuxco\SubscriptionKit\UnknownSkuException;
+use Smisco\SubscriptionKit\SkuConfig;
+use Smisco\SubscriptionKit\UnknownSkuException;
 
 /**
  * Mirrors the SPV 4-SKU shape (two recurring, two one-off — one-off = a

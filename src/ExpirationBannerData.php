@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Simnuxco\SubscriptionKit;
+namespace Smisco\SubscriptionKit;
 
 /**
  * Data struct returned by ExpirationBanner::compute(). UI is the host's

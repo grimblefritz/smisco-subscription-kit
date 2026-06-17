@@ -2,10 +2,10 @@
 
 declare(strict_types=1);
 
-namespace Simnuxco\SubscriptionKit\Tests;
+namespace Smisco\SubscriptionKit\Tests;
 
 use PHPUnit\Framework\TestCase;
-use Simnuxco\SubscriptionKit\SubscriptionState;
+use Smisco\SubscriptionKit\SubscriptionState;
 use Stripe\SearchResult;
 
 final class SubscriptionStateTest extends TestCase

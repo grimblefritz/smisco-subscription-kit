@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-namespace Simnuxco\SubscriptionKit\Tests\Support;
+namespace Smisco\SubscriptionKit\Tests\Support;
 
-use Simnuxco\SubscriptionKit\EventIdempotencyStore;
+use Smisco\SubscriptionKit\EventIdempotencyStore;
 
 final class InMemoryEventIdempotencyStore implements EventIdempotencyStore
 {

@@ -2,10 +2,10 @@
 
 declare(strict_types=1);
 
-namespace Simnuxco\SubscriptionKit\Tests\Support;
+namespace Smisco\SubscriptionKit\Tests\Support;
 
-use Simnuxco\SubscriptionKit\SubscriptionState;
-use Simnuxco\SubscriptionKit\SubscriptionStore;
+use Smisco\SubscriptionKit\SubscriptionState;
+use Smisco\SubscriptionKit\SubscriptionStore;
 
 class InMemorySubscriptionStore implements SubscriptionStore
 {

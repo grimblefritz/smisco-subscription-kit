@@ -2,18 +2,18 @@
 
 declare(strict_types=1);
 
-namespace Simnuxco\SubscriptionKit\Tests;
+namespace Smisco\SubscriptionKit\Tests;
 
 use PHPUnit\Framework\TestCase;
-use Simnuxco\SubscriptionKit\SkuConfig;
-use Simnuxco\SubscriptionKit\StripeClient;
-use Simnuxco\SubscriptionKit\SubscriptionState;
-use Simnuxco\SubscriptionKit\WebhookReceiver;
-use Simnuxco\SubscriptionKit\Tests\Support\InMemoryEventIdempotencyStore;
-use Simnuxco\SubscriptionKit\Tests\Support\InMemorySubscriptionStore;
-use Simnuxco\SubscriptionKit\Tests\Support\InMemoryUserStore;
-use Simnuxco\SubscriptionKit\Tests\Support\RecordingCheckoutHook;
-use Simnuxco\SubscriptionKit\Tests\Support\StripeHttpClientFake;
+use Smisco\SubscriptionKit\SkuConfig;
+use Smisco\SubscriptionKit\StripeClient;
+use Smisco\SubscriptionKit\SubscriptionState;
+use Smisco\SubscriptionKit\WebhookReceiver;
+use Smisco\SubscriptionKit\Tests\Support\InMemoryEventIdempotencyStore;
+use Smisco\SubscriptionKit\Tests\Support\InMemorySubscriptionStore;
+use Smisco\SubscriptionKit\Tests\Support\InMemoryUserStore;
+use Smisco\SubscriptionKit\Tests\Support\RecordingCheckoutHook;
+use Smisco\SubscriptionKit\Tests\Support\StripeHttpClientFake;
 use Stripe\ApiRequestor;
 
 final class WebhookReceiverTest extends TestCase

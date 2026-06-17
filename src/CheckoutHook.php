@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Simnuxco\SubscriptionKit;
+namespace Smisco\SubscriptionKit;
 
 use Stripe\Checkout\Session as CheckoutSession;
 

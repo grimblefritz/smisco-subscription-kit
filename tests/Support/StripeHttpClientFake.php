@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Simnuxco\SubscriptionKit\Tests\Support;
+namespace Smisco\SubscriptionKit\Tests\Support;
 
 use Stripe\HttpClient\ClientInterface;
 

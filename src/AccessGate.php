@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Simnuxco\SubscriptionKit;
+namespace Smisco\SubscriptionKit;
 
 /**
  * Decides whether a user has access to gated functionality.

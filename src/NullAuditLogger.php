@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Simnuxco\SubscriptionKit;
+namespace Smisco\SubscriptionKit;
 
 /**
  * No-op AuditLogger. AdminActions accepts a nullable AuditLogger and

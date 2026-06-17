@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-namespace Simnuxco\SubscriptionKit\Tests\Support;
+namespace Smisco\SubscriptionKit\Tests\Support;
 
-use Simnuxco\SubscriptionKit\CheckoutHook;
+use Smisco\SubscriptionKit\CheckoutHook;
 use Stripe\Checkout\Session as CheckoutSession;
 
 final class RecordingCheckoutHook implements CheckoutHook

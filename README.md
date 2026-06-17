@@ -1,4 +1,6 @@
-# simnuxco/subscription-kit
+# Smisco Subscription Kit for Stripe
+
+_Composer package: `smisco/subscription-kit`_
 
 A PHP library that wraps Stripe's subscription lifecycle — Checkout, Customer Portal, webhooks, access gating, and admin operations — behind host-implemented persistence interfaces. Your app supplies the database layer; the kit owns the Stripe logic.
 
@@ -47,7 +49,7 @@ The package is not on Packagist. Install it as a Composer [path repository](http
 Clone the repository:
 
 ```bash
-git clone https://github.com/grimblefritz/stripe-subscription-kit.git
+git clone https://github.com/grimblefritz/smisco-subscription-kit.git
 ```
 
 In your app's `composer.json`, add the repository and require the package:
@@ -55,10 +57,10 @@ In your app's `composer.json`, add the repository and require the package:
 ```json
 {
     "repositories": [
-        {"type": "path", "url": "../stripe-subscription-kit/public"}
+        {"type": "path", "url": "../smisco-subscription-kit/public"}
     ],
     "require": {
-        "simnuxco/subscription-kit": "@dev"
+        "smisco/subscription-kit": "@dev"
     }
 }
 ```
@@ -70,7 +72,7 @@ Adjust the relative path to match your directory layout, then run `composer upda
 ### 1. Define your SKUs
 
 ```php
-use Simnuxco\SubscriptionKit\SkuConfig;
+use Smisco\SubscriptionKit\SkuConfig;
 
 $skus = new SkuConfig([
     'monthly' => [
@@ -95,15 +97,15 @@ $skus = new SkuConfig([
 At minimum, you need three implementations (see [Interfaces you implement](#interfaces-you-implement) for full method signatures):
 
 ```php
-class MySubscriptionStore implements \Simnuxco\SubscriptionKit\SubscriptionStore { /* ... */ }
-class MyUserStore implements \Simnuxco\SubscriptionKit\UserStore { /* ... */ }
-class MyEventIdempotencyStore implements \Simnuxco\SubscriptionKit\EventIdempotencyStore { /* ... */ }
+class MySubscriptionStore implements \Smisco\SubscriptionKit\SubscriptionStore { /* ... */ }
+class MyUserStore implements \Smisco\SubscriptionKit\UserStore { /* ... */ }
+class MyEventIdempotencyStore implements \Smisco\SubscriptionKit\EventIdempotencyStore { /* ... */ }
 ```
 
 ### 3. Wire everything up at boot
 
 ```php
-use Simnuxco\SubscriptionKit\{
+use Smisco\SubscriptionKit\{
     StripeClient, SkuConfig,
     CheckoutService, PortalService,
     AccessGate, ExpirationBanner,
@@ -153,7 +155,7 @@ $redirectUrl = $checkout->createSession(
 header("Location: $redirectUrl");
 
 // Gate access on a protected page
-$context = new \Simnuxco\SubscriptionKit\GateContext(
+$context = new \Smisco\SubscriptionKit\GateContext(
     role:         $user->role,
     status:       $users->getStatus($user->id),
     override:     $users->getOverride($user->id),
@@ -298,7 +300,7 @@ try {
     }
 } catch (\Throwable $e) {
     $db->rollBack();
-    $result = new \Simnuxco\SubscriptionKit\WebhookResult(500, ['error' => 'internal']);
+    $result = new \Smisco\SubscriptionKit\WebhookResult(500, ['error' => 'internal']);
 }
 
 http_response_code($result->httpStatus);
@@ -359,7 +361,7 @@ Every row above is reached **only after** the `app_id` ownership gate confirms t
 For host-specific work after a successful checkout (creating app-specific rows, sending welcome emails, enrolling users in onboarding), implement the optional `CheckoutHook` interface and pass it to `WebhookReceiver`:
 
 ```php
-class MyCheckoutHook implements \Simnuxco\SubscriptionKit\CheckoutHook
+class MyCheckoutHook implements \Smisco\SubscriptionKit\CheckoutHook
 {
     public function afterCheckoutCompleted(
         \Stripe\Checkout\Session $session,
@@ -380,7 +382,7 @@ $webhook = new WebhookReceiver(
 `AccessGate` decides whether a user should access gated functionality. Build a `GateContext` from your user's current state, then call `decide()`.
 
 ```php
-use Simnuxco\SubscriptionKit\{AccessGate, GateContext};
+use Smisco\SubscriptionKit\{AccessGate, GateContext};
 
 $gate = new AccessGate();
 
@@ -429,7 +431,7 @@ Roles not in `gatedRoles` always get `allow`.
 `ExpirationBanner` computes whether to show an end-of-period warning when a subscription is set to cancel at period end.
 
 ```php
-use Simnuxco\SubscriptionKit\ExpirationBanner;
+use Smisco\SubscriptionKit\ExpirationBanner;
 
 $banner = new ExpirationBanner();  // default trigger days: [10, 7, 4, 2, 0]
 
@@ -474,7 +476,7 @@ $days = $banner->daysRemaining($sub);
 `AdminActions` provides admin-facing subscription management with optional audit logging.
 
 ```php
-use Simnuxco\SubscriptionKit\AdminActions;
+use Smisco\SubscriptionKit\AdminActions;
 
 $admin = new AdminActions(
     $stripe, $skus, $subs, $users,

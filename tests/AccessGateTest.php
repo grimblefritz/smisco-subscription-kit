@@ -2,12 +2,12 @@
 
 declare(strict_types=1);
 
-namespace Simnuxco\SubscriptionKit\Tests;
+namespace Smisco\SubscriptionKit\Tests;
 
 use PHPUnit\Framework\TestCase;
-use Simnuxco\SubscriptionKit\AccessGate;
-use Simnuxco\SubscriptionKit\GateContext;
-use Simnuxco\SubscriptionKit\SubscriptionState;
+use Smisco\SubscriptionKit\AccessGate;
+use Smisco\SubscriptionKit\GateContext;
+use Smisco\SubscriptionKit\SubscriptionState;
 
 final class AccessGateTest extends TestCase
 {

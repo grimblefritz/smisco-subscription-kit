@@ -2,10 +2,10 @@
 
 declare(strict_types=1);
 
-namespace Simnuxco\SubscriptionKit\Tests;
+namespace Smisco\SubscriptionKit\Tests;
 
 use PHPUnit\Framework\TestCase;
-use Simnuxco\SubscriptionKit\StripeClient;
+use Smisco\SubscriptionKit\StripeClient;
 use Stripe\Stripe;
 
 final class StripeClientTest extends TestCase

@@ -2,15 +2,15 @@
 
 declare(strict_types=1);
 
-namespace Simnuxco\SubscriptionKit\Tests;
+namespace Smisco\SubscriptionKit\Tests;
 
 use PHPUnit\Framework\TestCase;
-use Simnuxco\SubscriptionKit\CheckoutService;
-use Simnuxco\SubscriptionKit\SkuConfig;
-use Simnuxco\SubscriptionKit\StripeClient;
-use Simnuxco\SubscriptionKit\UnknownSkuException;
-use Simnuxco\SubscriptionKit\Tests\Support\InMemoryUserStore;
-use Simnuxco\SubscriptionKit\Tests\Support\StripeHttpClientFake;
+use Smisco\SubscriptionKit\CheckoutService;
+use Smisco\SubscriptionKit\SkuConfig;
+use Smisco\SubscriptionKit\StripeClient;
+use Smisco\SubscriptionKit\UnknownSkuException;
+use Smisco\SubscriptionKit\Tests\Support\InMemoryUserStore;
+use Smisco\SubscriptionKit\Tests\Support\StripeHttpClientFake;
 use Stripe\ApiRequestor;
 
 final class CheckoutServiceTest extends TestCase

@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-namespace Simnuxco\SubscriptionKit\Tests\Support;
+namespace Smisco\SubscriptionKit\Tests\Support;
 
-use Simnuxco\SubscriptionKit\AuditLogger;
+use Smisco\SubscriptionKit\AuditLogger;
 
 final class RecordingAuditLogger implements AuditLogger
 {

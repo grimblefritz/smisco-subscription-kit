@@ -2,12 +2,12 @@
 
 declare(strict_types=1);
 
-namespace Simnuxco\SubscriptionKit\Tests;
+namespace Smisco\SubscriptionKit\Tests;
 
 use PHPUnit\Framework\TestCase;
-use Simnuxco\SubscriptionKit\ExpirationBanner;
-use Simnuxco\SubscriptionKit\ExpirationBannerData;
-use Simnuxco\SubscriptionKit\SubscriptionState;
+use Smisco\SubscriptionKit\ExpirationBanner;
+use Smisco\SubscriptionKit\ExpirationBannerData;
+use Smisco\SubscriptionKit\SubscriptionState;
 
 final class ExpirationBannerTest extends TestCase
 {
