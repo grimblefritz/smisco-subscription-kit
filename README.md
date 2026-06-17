@@ -113,15 +113,21 @@ use Simnuxco\SubscriptionKit\{
 // Initialize Stripe SDK (pin API version for stability)
 $stripe = new StripeClient($secretKey, '2025-08-27');
 
+// Your app's identity on the Stripe account — a short, stable string.
+// Stamped on everything you create and checked on every webhook so apps
+// sharing one Stripe account never touch each other's objects. Required.
+// See "Shared Stripe accounts" below.
+$appId = 'myapp';
+
 // Your implementations
 $users  = new MyUserStore($db);
 $subs   = new MySubscriptionStore($db);
 $events = new MyEventIdempotencyStore($db);
 
 // Build services
-$checkout = new CheckoutService($stripe, $skus, $users);
+$checkout = new CheckoutService($stripe, $skus, $users, $appId);
 $portal   = new PortalService($stripe, $users);
-$webhook  = new WebhookReceiver($webhookSecret, $stripe, $skus, $events, $subs, $users);
+$webhook  = new WebhookReceiver($webhookSecret, $stripe, $skus, $events, $subs, $users, $appId);
 $gate     = new AccessGate();
 $banner   = new ExpirationBanner();
 
@@ -245,6 +251,7 @@ The service:
 - Resolves the SKU code to a Stripe Price ID via `SkuConfig`
 - Gets or creates a Stripe Customer (checks `UserStore` for an existing customer ID first)
 - Sets `metadata.user_id` on the Checkout session and subscription data (used by the webhook receiver to associate events with your user)
+- Sets `metadata.app_id` on both the session and the subscription data (your ownership tag — see [Shared Stripe accounts](#shared-stripe-accounts-the-app_id-ownership-gate)). It is written last, so a host-supplied `app_id` in `$extraMetadata` cannot override it
 - Merges `$extraMetadata` into session and subscription metadata
 - Applies `trial_period_days` if the SKU specifies one
 - Selects Checkout mode (`subscription` or `payment`) from the SKU config
@@ -301,6 +308,33 @@ echo json_encode($result->body);
 
 **Why the host owns the transaction:** The idempotency-mark-then-dispatch pattern only works atomically when the event mark is in the same transaction as the side effects. The kit can't own the transaction because it doesn't know your DB driver.
 
+### Shared Stripe accounts — the `app_id` ownership gate
+
+A single Stripe account is **one shared object space**. Every webhook endpoint registered on it receives **all** events of the types it subscribed to, regardless of which application created the underlying object — Stripe does not route events by "which integration made this." So if two of your apps share one Stripe account, **both** receive every `customer.subscription.created`, `checkout.session.completed`, `invoice.*`, and so on. Each app must decide which events are its own and ignore the rest. (Without this, one app's webhook can act on — even cancel — another app's subscriptions.)
+
+`app_id` is the explicit discriminator. It is the short, stable string you pass to `CheckoutService` and `WebhookReceiver` at boot (e.g. `'spv'`, `'gdt'`). The contract for every app on a shared account is two halves:
+
+1. **Stamp** — `CheckoutService` writes `metadata.app_id = <your app_id>` onto every Checkout Session and the resulting Subscription.
+2. **Check** — `WebhookReceiver` reads the owning object's `metadata.app_id` first thing on every event. The match is **binary**:
+
+   | Incoming object's `metadata.app_id` | Action |
+   |---|---|
+   | present **and equal to** your `app_id` | process normally |
+   | a **different** `app_id`, **or absent** | **ignore** — `200 OK`, no read/write/mutation, one log line |
+
+   The gate runs **before** the idempotency mark, so co-tenant events never even enter your `EventIdempotencyStore`. An ignored event returns a `WebhookResult` with `ignored: true` and HTTP 200 (so Stripe stops retrying); like a duplicate, nothing was written, so commit-or-rollback is equivalent.
+
+`app_id` is **required and non-empty** — there is no ungated mode. A single-tenant app (its own Stripe account) still passes one; pick any stable string.
+
+> **Migration / backfill (do this before turning a new `app_id` on):** because the gate is binary, an object with **no** `app_id` is treated as *not yours* and its events are ignored. Any subscription that existed before you adopted `app_id` must be backfilled, or its renewals, cancellations, `trial_will_end`, and payment-failure events go silently unhandled:
+>
+> ```php
+> // one-time, over your current live subscriptions
+> \Stripe\Subscription::update($subId, ['metadata' => ['app_id' => 'myapp']]);
+> ```
+>
+> Sequence the backfill with your deploy. This applies even on a non-shared account — absent `app_id` is ignored regardless.
+
 ### Handled events
 
 | Stripe Event | What the receiver does |
@@ -313,6 +347,8 @@ echo json_encode($result->body);
 | `invoice.paid` | Logged, no local action |
 | `invoice.payment_failed` | Upserts subscription with `past_due` status |
 | Unknown events | Returns 200 OK (prevents Stripe from retrying) |
+
+Every row above is reached **only after** the `app_id` ownership gate confirms the event is yours. An event owned by another app (or carrying no `app_id`) is ignored before any of this runs — see [Shared Stripe accounts](#shared-stripe-accounts-the-app_id-ownership-gate).
 
 ### Duplicate detection
 
@@ -334,7 +370,7 @@ class MyCheckoutHook implements \Simnuxco\SubscriptionKit\CheckoutHook
 }
 
 $webhook = new WebhookReceiver(
-    $webhookSecret, $stripe, $skus, $events, $subs, $users,
+    $webhookSecret, $stripe, $skus, $events, $subs, $users, $appId,
     checkoutHook: new MyCheckoutHook($db),
 );
 ```
@@ -586,7 +622,7 @@ If not provided, `AdminActions` falls back to the built-in `NullAuditLogger` (no
 | `SubscriptionState` | Normalized subscription snapshot. Build with `fromStripeSubscription()`, `fromArray()`, or the constructor. Readonly properties: `stripeSubscriptionId`, `stripeCustomerId`, `skuCode`, `status`, `currentPeriodStart`, `currentPeriodEnd`, `cancelAtPeriodEnd`. |
 | `GateContext` | Input to `AccessGate::decide()`. Readonly properties: `role`, `status`, `override`, `subscription`, `gatedRoles`. |
 | `ExpirationBannerData` | Returned by `ExpirationBanner::compute()`. Readonly properties: `daysRemaining`, `severity`. |
-| `WebhookResult` | Returned by `WebhookReceiver::handle()`. Readonly properties: `httpStatus`, `body`, `duplicate`. Method: `isSuccess()`. |
+| `WebhookResult` | Returned by `WebhookReceiver::handle()`. Readonly properties: `httpStatus`, `body`, `duplicate`, `ignored` (true when the app_id gate skipped a foreign event). Method: `isSuccess()`. |
 | `UnknownSkuException` | Thrown by `SkuConfig` lookups. Extends `InvalidArgumentException`. |
 
 ### Services
@@ -594,9 +630,9 @@ If not provided, `AdminActions` falls back to the built-in `NullAuditLogger` (no
 | Class | Constructor | Key methods |
 |-------|-------------|-------------|
 | `StripeClient` | `(string $secretKey, ?string $apiVersion)` | (none — construction is the effect) |
-| `CheckoutService` | `(StripeClient, SkuConfig, UserStore)` | `createSession(int $userId, string $email, string $name, string $skuCode, array $extraMetadata, string $successUrl, string $cancelUrl): string` |
+| `CheckoutService` | `(StripeClient, SkuConfig, UserStore, string $appId)` | `createSession(int $userId, string $email, string $name, string $skuCode, array $extraMetadata, string $successUrl, string $cancelUrl): string` |
 | `PortalService` | `(StripeClient, UserStore)` | `createSession(int $userId, string $returnUrl): string` |
-| `WebhookReceiver` | `(string $webhookSecret, StripeClient, SkuConfig, EventIdempotencyStore, SubscriptionStore, UserStore, ?CheckoutHook)` | `handle(string $payload, string $signatureHeader): WebhookResult` |
+| `WebhookReceiver` | `(string $webhookSecret, StripeClient, SkuConfig, EventIdempotencyStore, SubscriptionStore, UserStore, string $appId, ?CheckoutHook)` | `handle(string $payload, string $signatureHeader): WebhookResult` |
 | `AdminActions` | `(StripeClient, SkuConfig, SubscriptionStore, UserStore, int $adminUserId, ?AuditLogger)` | `syncSubscription(...)`, `cancelSubscription(...)`, `setOverride(...)`, `clearOverride(...)` |
 
 ### Pure logic

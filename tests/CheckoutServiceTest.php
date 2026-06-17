@@ -15,6 +15,8 @@ use Stripe\ApiRequestor;
 
 final class CheckoutServiceTest extends TestCase
 {
+    private const APP_ID = 'testapp';
+
     private StripeHttpClientFake $http;
     private InMemoryUserStore $users;
     private SkuConfig $skus;
@@ -42,7 +44,7 @@ final class CheckoutServiceTest extends TestCase
         ]);
 
         $this->client   = new StripeClient('sk_test_dummy', '2025-08-27.basil');
-        $this->checkout = new CheckoutService($this->client, $this->skus, $this->users);
+        $this->checkout = new CheckoutService($this->client, $this->skus, $this->users, self::APP_ID);
     }
 
     protected function tearDown(): void
@@ -264,5 +266,64 @@ final class CheckoutServiceTest extends TestCase
         $session = $this->findRequest('post', '/v1/checkout/sessions');
         $this->assertSame('https://app.test/ok?s={CHECKOUT_SESSION_ID}', $session['params']['success_url'] ?? null);
         $this->assertSame('https://app.test/cancel',                     $session['params']['cancel_url']  ?? null);
+    }
+
+    // ---- app_id stamping ------------------------------------------------
+
+    public function test_app_id_stamped_into_session_and_subscription_metadata(): void
+    {
+        $this->users->setStripeCustomerId(42, 'cus_existing');
+        $this->queueCheckoutSession();
+
+        $this->checkout->createSession(
+            42, 'a@b.test', 'Alice', 'monthly_recurring', [], 'https://ok', 'https://x',
+        );
+
+        $session = $this->findRequest('post', '/v1/checkout/sessions');
+        // Stamped on the session itself...
+        $this->assertSame(self::APP_ID, $session['params']['metadata']['app_id'] ?? null);
+        // ...and propagated to subscription_data so it lands on the Subscription
+        // (and therefore on every subscription/invoice event it later fires).
+        $this->assertSame(self::APP_ID, $session['params']['subscription_data']['metadata']['app_id'] ?? null);
+    }
+
+    public function test_app_id_stamped_into_payment_mode_session_metadata(): void
+    {
+        // payment mode has no subscription_data; app_id still tags the session.
+        $this->users->setStripeCustomerId(42, 'cus_existing');
+        $this->queueCheckoutSession();
+
+        $this->checkout->createSession(
+            42, 'a@b.test', 'Alice', 'one_time', [], 'https://ok', 'https://x',
+        );
+
+        $session = $this->findRequest('post', '/v1/checkout/sessions');
+        $this->assertSame('payment', $session['params']['mode'] ?? null);
+        $this->assertSame(self::APP_ID, $session['params']['metadata']['app_id'] ?? null);
+        $this->assertNull($session['params']['subscription_data'] ?? null);
+    }
+
+    public function test_app_id_overrides_host_supplied_metadata_collision(): void
+    {
+        // app_id is identity — a host that puts 'app_id' in extraMetadata must
+        // not be able to spoof it; the configured value wins.
+        $this->users->setStripeCustomerId(42, 'cus_existing');
+        $this->queueCheckoutSession();
+
+        $this->checkout->createSession(
+            42, 'a@b.test', 'Alice', 'monthly_recurring',
+            ['app_id' => 'spoofed'],
+            'https://ok', 'https://x',
+        );
+
+        $session = $this->findRequest('post', '/v1/checkout/sessions');
+        $this->assertSame(self::APP_ID, $session['params']['metadata']['app_id'] ?? null);
+        $this->assertSame(self::APP_ID, $session['params']['subscription_data']['metadata']['app_id'] ?? null);
+    }
+
+    public function test_empty_app_id_throws(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        new CheckoutService($this->client, $this->skus, $this->users, '');
     }
 }

@@ -16,6 +16,12 @@ namespace Simnuxco\SubscriptionKit;
  * `duplicate` is true when the receiver short-circuited on the
  * idempotency check. The host can treat this as a successful no-op
  * (commit-or-rollback is equivalent because nothing was written).
+ *
+ * `ignored` is true when the receiver short-circuited on the app_id
+ * ownership gate — the event belongs to another app on a shared Stripe
+ * account (or carries no app_id). Like `duplicate`, nothing was written,
+ * so commit-or-rollback is equivalent; the host responds 200 so Stripe
+ * stops retrying. Useful for metering foreign-event volume.
  */
 final class WebhookResult
 {
@@ -24,6 +30,7 @@ final class WebhookResult
         /** @var array<string,mixed> */
         public readonly array $body,
         public readonly bool $duplicate = false,
+        public readonly bool $ignored = false,
     ) {
     }
 

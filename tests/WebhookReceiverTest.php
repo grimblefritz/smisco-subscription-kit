@@ -19,6 +19,7 @@ use Stripe\ApiRequestor;
 final class WebhookReceiverTest extends TestCase
 {
     private const SECRET = 'whsec_test_secret_for_signing';
+    private const APP_ID = 'testapp';
 
     private StripeHttpClientFake $http;
     private InMemoryEventIdempotencyStore $events;
@@ -60,6 +61,7 @@ final class WebhookReceiverTest extends TestCase
             $this->events,
             $this->subs,
             $this->users,
+            self::APP_ID,
             $this->hook,
         );
     }
@@ -101,7 +103,7 @@ final class WebhookReceiverTest extends TestCase
             'customer'               => 'cus_test_1',
             'status'                 => 'active',
             'cancel_at_period_end'   => false,
-            'metadata'               => ['user_id' => '42', 'sku_code' => 'monthly_recurring'],
+            'metadata'               => ['user_id' => '42', 'sku_code' => 'monthly_recurring', 'app_id' => self::APP_ID],
             'items'                  => ['data' => [[
                 'price'                => ['id' => 'price_mrec'],
                 'current_period_start' => 1700000000,
@@ -116,16 +118,19 @@ final class WebhookReceiverTest extends TestCase
             'id'           => 'cs_test_1',
             'object'       => 'checkout.session',
             'subscription' => 'sub_test_1',
-            'metadata'     => ['user_id' => '42', 'sku_code' => 'monthly_recurring'],
+            'metadata'     => ['user_id' => '42', 'sku_code' => 'monthly_recurring', 'app_id' => self::APP_ID],
         ], $overrides);
     }
 
     private function invoiceObject(array $overrides = []): array
     {
         return array_replace([
-            'id'           => 'in_test_1',
-            'object'       => 'invoice',
-            'subscription' => 'sub_test_1',
+            'id'                   => 'in_test_1',
+            'object'               => 'invoice',
+            'subscription'         => 'sub_test_1',
+            // Inline copy of the subscription's metadata Stripe puts on invoices;
+            // lets the ownership gate resolve app_id without a retrieve.
+            'subscription_details' => ['metadata' => ['app_id' => self::APP_ID]],
         ], $overrides);
     }
 
@@ -181,7 +186,7 @@ final class WebhookReceiverTest extends TestCase
         };
         $receiver = new WebhookReceiver(
             self::SECRET, $this->client, $this->skus,
-            $this->events, $store, $this->users, null,
+            $this->events, $store, $this->users, self::APP_ID, null,
         );
 
         [$p, $h] = $this->sign($this->envelope('customer.subscription.deleted', $this->subscriptionObject()));
@@ -202,7 +207,8 @@ final class WebhookReceiverTest extends TestCase
 
     public function test_checkout_session_missing_metadata_bails(): void
     {
-        $obj = $this->checkoutSessionObject(['metadata' => []]);
+        // app_id present (passes the gate) but no user_id/sku_code → handler bails.
+        $obj = $this->checkoutSessionObject(['metadata' => ['app_id' => self::APP_ID]]);
         [$p, $h] = $this->sign($this->envelope('checkout.session.completed', $obj));
         $r = $this->receiver->handle($p, $h);
         $this->assertSame(200, $r->httpStatus);
@@ -245,7 +251,7 @@ final class WebhookReceiverTest extends TestCase
         $this->http->queueJson('get',  '/v1/subscriptions/sub_test_1', $oneoffSub);
         $this->http->queueJson('post', '/v1/subscriptions/sub_test_1', $oneoffSub);
 
-        $session = $this->checkoutSessionObject(['metadata' => ['user_id' => '42', 'sku_code' => 'monthly_oneoff']]);
+        $session = $this->checkoutSessionObject(['metadata' => ['user_id' => '42', 'sku_code' => 'monthly_oneoff', 'app_id' => self::APP_ID]]);
         [$p, $h] = $this->sign($this->envelope('checkout.session.completed', $session));
 
         $r = $this->receiver->handle($p, $h);
@@ -303,7 +309,9 @@ final class WebhookReceiverTest extends TestCase
         ]);
         $this->subs->seed($existing, 7);
 
-        $obj = $this->subscriptionObject(['metadata' => []]);
+        // app_id present (ours, passes the gate) but no user_id → exercises the
+        // user_id resolution fallback downstream of the gate.
+        $obj = $this->subscriptionObject(['metadata' => ['app_id' => self::APP_ID]]);
         [$p, $h] = $this->sign($this->envelope('customer.subscription.updated', $obj));
         $r = $this->receiver->handle($p, $h);
 
@@ -324,7 +332,9 @@ final class WebhookReceiverTest extends TestCase
             'email'  => 'owner@example.test',
         ]);
 
-        $obj = $this->subscriptionObject(['metadata' => []]);
+        // app_id present (ours, passes the gate) but no user_id → exercises the
+        // user_id resolution fallback downstream of the gate.
+        $obj = $this->subscriptionObject(['metadata' => ['app_id' => self::APP_ID]]);
         [$p, $h] = $this->sign($this->envelope('customer.subscription.updated', $obj));
         $r = $this->receiver->handle($p, $h);
 
@@ -342,7 +352,9 @@ final class WebhookReceiverTest extends TestCase
             'email'  => 'orphan@example.test',
         ]);
 
-        $obj = $this->subscriptionObject(['metadata' => []]);
+        // app_id present (ours, passes the gate) but no user_id → exercises the
+        // user_id resolution fallback downstream of the gate.
+        $obj = $this->subscriptionObject(['metadata' => ['app_id' => self::APP_ID]]);
         [$p, $h] = $this->sign($this->envelope('customer.subscription.updated', $obj));
         $r = $this->receiver->handle($p, $h);
 
@@ -358,7 +370,9 @@ final class WebhookReceiverTest extends TestCase
             'object' => 'customer',
         ]);
 
-        $obj = $this->subscriptionObject(['metadata' => []]);
+        // app_id present (ours, passes the gate) but no user_id → exercises the
+        // user_id resolution fallback downstream of the gate.
+        $obj = $this->subscriptionObject(['metadata' => ['app_id' => self::APP_ID]]);
         [$p, $h] = $this->sign($this->envelope('customer.subscription.updated', $obj));
         $r = $this->receiver->handle($p, $h);
 
@@ -370,7 +384,7 @@ final class WebhookReceiverTest extends TestCase
     {
         // No sku_code in metadata; reverse-lookup via the price id.
         $obj = $this->subscriptionObject([
-            'metadata' => ['user_id' => '42'],
+            'metadata' => ['user_id' => '42', 'app_id' => self::APP_ID],
             'items'    => ['data' => [[
                 'price'                => ['id' => 'price_mrec'],
                 'current_period_start' => 1700000000,
@@ -389,7 +403,7 @@ final class WebhookReceiverTest extends TestCase
     {
         // Price id isn't in the SkuConfig → no resolvable sku_code → bail.
         $obj = $this->subscriptionObject([
-            'metadata' => ['user_id' => '42'],
+            'metadata' => ['user_id' => '42', 'app_id' => self::APP_ID],
             'items'    => ['data' => [[
                 'price'                => ['id' => 'price_unknown'],
                 'current_period_start' => 1700000000,
@@ -476,5 +490,176 @@ final class WebhookReceiverTest extends TestCase
         $this->assertSame(200, $r->httpStatus);
         $this->assertSame([], $this->subs->upserts);
         $this->assertSame([], $this->subs->ended);
+    }
+
+    // ---- app_id ownership gate -----------------------------------------
+
+    public function test_empty_app_id_throws(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        new WebhookReceiver(
+            self::SECRET, $this->client, $this->skus,
+            $this->events, $this->subs, $this->users, '', $this->hook,
+        );
+    }
+
+    public function test_foreign_app_id_subscription_event_ignored_and_not_recorded(): void
+    {
+        // A co-tenant app's subscription event — different app_id. Must be
+        // ignored with no side effects, and (gate runs before idempotency)
+        // must NOT be recorded in the event store.
+        $obj = $this->subscriptionObject([
+            'metadata' => ['user_id' => '42', 'sku_code' => 'monthly_recurring', 'app_id' => 'otherapp'],
+        ]);
+        [$p, $h] = $this->sign($this->envelope('customer.subscription.updated', $obj));
+        $r = $this->receiver->handle($p, $h);
+
+        $this->assertSame(200, $r->httpStatus);
+        $this->assertTrue($r->ignored);
+        $this->assertSame([], $this->subs->upserts);
+        $this->assertSame([], $this->events->recorded); // gate fired before recordEvent
+    }
+
+    public function test_absent_app_id_subscription_event_ignored(): void
+    {
+        // Migration-gap case: an object with no app_id at all is treated as
+        // not-ours (binary gate, no DB fallback for absent app_id).
+        $obj = $this->subscriptionObject([
+            'metadata' => ['user_id' => '42', 'sku_code' => 'monthly_recurring'],
+        ]);
+        [$p, $h] = $this->sign($this->envelope('customer.subscription.updated', $obj));
+        $r = $this->receiver->handle($p, $h);
+
+        $this->assertSame(200, $r->httpStatus);
+        $this->assertTrue($r->ignored);
+        $this->assertSame([], $this->subs->upserts);
+        $this->assertSame([], $this->events->recorded);
+    }
+
+    public function test_matching_app_id_subscription_event_processed(): void
+    {
+        // Our own event (default fixture app_id == configured) processes
+        // normally and is NOT flagged ignored.
+        [$p, $h] = $this->sign($this->envelope('customer.subscription.updated', $this->subscriptionObject()));
+        $r = $this->receiver->handle($p, $h);
+
+        $this->assertSame(200, $r->httpStatus);
+        $this->assertFalse($r->ignored);
+        $this->assertSame(1, count($this->subs->upserts));
+        $this->assertArrayHasKey('evt_test_1', $this->events->recorded);
+    }
+
+    public function test_foreign_app_id_checkout_session_ignored_no_retrieve(): void
+    {
+        // Foreign checkout.session.completed: gate ignores it before the
+        // handler runs, so the live-subscription retrieve never happens.
+        $obj = $this->checkoutSessionObject([
+            'metadata' => ['user_id' => '42', 'sku_code' => 'monthly_recurring', 'app_id' => 'otherapp'],
+        ]);
+        [$p, $h] = $this->sign($this->envelope('checkout.session.completed', $obj));
+        $r = $this->receiver->handle($p, $h);
+
+        $this->assertSame(200, $r->httpStatus);
+        $this->assertTrue($r->ignored);
+        $this->assertSame([], $this->subs->upserts);
+        $this->assertSame([], $this->hook->calls);
+        // No Stripe GET (would only happen if the handler ran).
+        $gets = array_values(array_filter($this->http->recorded, fn($r) => $r['method'] === 'get'));
+        $this->assertSame([], $gets);
+    }
+
+    public function test_foreign_invoice_inline_metadata_ignored(): void
+    {
+        // Invoice carries the foreign app_id inline via subscription_details —
+        // resolved without a retrieve, then ignored.
+        $obj = $this->invoiceObject([
+            'subscription_details' => ['metadata' => ['app_id' => 'otherapp']],
+        ]);
+        [$p, $h] = $this->sign($this->envelope('invoice.payment_failed', $obj));
+        $r = $this->receiver->handle($p, $h);
+
+        $this->assertSame(200, $r->httpStatus);
+        $this->assertTrue($r->ignored);
+        $this->assertSame([], $this->subs->upserts);
+        $gets = array_values(array_filter($this->http->recorded, fn($r) => $r['method'] === 'get'));
+        $this->assertSame([], $gets); // resolved inline, no retrieve
+    }
+
+    public function test_invoice_app_id_resolved_via_invoice_metadata_fallback(): void
+    {
+        // No subscription_details; fall back to the invoice's own metadata.
+        $existing = SubscriptionState::fromArray([
+            'stripe_subscription_id' => 'sub_test_1',
+            'stripe_customer_id'     => 'cus_test_1',
+            'sku_code'               => 'monthly_recurring',
+            'status'                 => 'active',
+            'current_period_start'   => 1700000000,
+            'current_period_end'     => 1702592000,
+            'cancel_at_period_end'   => false,
+        ]);
+        $this->subs->seed($existing, 42);
+
+        $obj = $this->invoiceObject([
+            'subscription_details' => null,
+            'metadata'             => ['app_id' => self::APP_ID],
+        ]);
+        [$p, $h] = $this->sign($this->envelope('invoice.payment_failed', $obj));
+        $r = $this->receiver->handle($p, $h);
+
+        $this->assertSame(200, $r->httpStatus);
+        $this->assertFalse($r->ignored);
+        $this->assertSame(1, count($this->subs->upserts));
+        $this->assertSame('past_due', $this->subs->upserts[0]['state']->status);
+        // Resolved via invoice.metadata — no subscription retrieve needed.
+        $gets = array_values(array_filter($this->http->recorded, fn($r) => $r['method'] === 'get'));
+        $this->assertSame([], $gets);
+    }
+
+    public function test_invoice_app_id_resolved_via_subscription_retrieve_fallback(): void
+    {
+        // No inline metadata anywhere → gate retrieves the subscription and
+        // reads app_id off it.
+        $existing = SubscriptionState::fromArray([
+            'stripe_subscription_id' => 'sub_test_1',
+            'stripe_customer_id'     => 'cus_test_1',
+            'sku_code'               => 'monthly_recurring',
+            'status'                 => 'active',
+            'current_period_start'   => 1700000000,
+            'current_period_end'     => 1702592000,
+            'cancel_at_period_end'   => false,
+        ]);
+        $this->subs->seed($existing, 42);
+
+        $this->http->queueJson('get', '/v1/subscriptions/sub_test_1', $this->subscriptionObject());
+
+        $obj = $this->invoiceObject(['subscription_details' => null]);
+        [$p, $h] = $this->sign($this->envelope('invoice.payment_failed', $obj));
+        $r = $this->receiver->handle($p, $h);
+
+        $this->assertSame(200, $r->httpStatus);
+        $this->assertFalse($r->ignored);
+        $this->assertSame(1, count($this->subs->upserts));
+        $this->assertSame('past_due', $this->subs->upserts[0]['state']->status);
+        // Exactly one retrieve, from the gate.
+        $gets = array_values(array_filter($this->http->recorded, fn($r) => $r['method'] === 'get'));
+        $this->assertSame(1, count($gets));
+        $this->assertStringContainsString('/v1/subscriptions/sub_test_1', $gets[0]['url']);
+    }
+
+    public function test_foreign_invoice_via_subscription_retrieve_ignored(): void
+    {
+        // Retrieve fallback resolves a foreign app_id → ignored.
+        $this->http->queueJson('get', '/v1/subscriptions/sub_test_1', $this->subscriptionObject([
+            'metadata' => ['user_id' => '42', 'sku_code' => 'monthly_recurring', 'app_id' => 'otherapp'],
+        ]));
+
+        $obj = $this->invoiceObject(['subscription_details' => null]);
+        [$p, $h] = $this->sign($this->envelope('invoice.payment_failed', $obj));
+        $r = $this->receiver->handle($p, $h);
+
+        $this->assertSame(200, $r->httpStatus);
+        $this->assertTrue($r->ignored);
+        $this->assertSame([], $this->subs->upserts);
+        $this->assertSame([], $this->events->recorded);
     }
 }

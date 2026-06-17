@@ -105,6 +105,26 @@ namespace PHPUnit\Framework {
                 throw new AssertionFailedError($message !== '' ? $message : 'expected non-null');
             }
         }
+
+        protected function assertArrayHasKey($key, $array, string $message = ''): void
+        {
+            if (!is_array($array) || !\array_key_exists($key, $array)) {
+                throw new AssertionFailedError(
+                    $message !== '' ? $message
+                                    : sprintf('expected array to have key %s', \json_encode($key))
+                );
+            }
+        }
+
+        protected function assertStringContainsString(string $needle, string $haystack, string $message = ''): void
+        {
+            if (!\str_contains($haystack, $needle)) {
+                throw new AssertionFailedError(
+                    $message !== '' ? $message
+                                    : sprintf('expected "%s" to contain "%s"', $haystack, $needle)
+                );
+            }
+        }
     }
 }
 

@@ -31,7 +31,16 @@ final class CheckoutService
         private readonly StripeClient $client,         // SDK init proof
         private readonly SkuConfig $skus,
         private readonly UserStore $users,
+        // Application discriminator for shared Stripe accounts. Stamped into
+        // metadata.app_id on every Checkout Session and (subscription mode)
+        // the resulting Subscription, so the consumer's WebhookReceiver can
+        // tell its own objects apart from co-tenant apps'. Required and
+        // non-empty — there is no "unstamped" mode (see SPEC decision #15).
+        private readonly string $appId,
     ) {
+        if ($appId === '') {
+            throw new \InvalidArgumentException('CheckoutService: appId is empty');
+        }
     }
 
     /**
@@ -61,9 +70,12 @@ final class CheckoutService
 
         $customerId = $this->getOrCreateCustomer($userId, $email, $name);
 
+        // app_id is identity, written last so a host can't override it via
+        // $extraMetadata (it would only be spoofing its own ownership tag).
         $metadata = array_merge($extraMetadata, [
             'user_id'  => (string)$userId,
             'sku_code' => $skuCode,
+            'app_id'   => $this->appId,
         ]);
 
         $params = [

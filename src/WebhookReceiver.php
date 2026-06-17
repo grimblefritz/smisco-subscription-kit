@@ -45,10 +45,19 @@ final class WebhookReceiver
         private readonly EventIdempotencyStore $events,
         private readonly SubscriptionStore $subscriptions,
         private readonly UserStore $users,
+        // Application discriminator for shared Stripe accounts. Every event is
+        // gated against it: an object whose metadata.app_id is not exactly this
+        // value (a different app, or absent) is ignored. Required and non-empty
+        // — there is no ungated mode (see SPEC decision #15). Must match the
+        // appId the consumer's CheckoutService stamps.
+        private readonly string $appId,
         private readonly ?CheckoutHook $checkoutHook = null,
     ) {
         if ($webhookSecret === '') {
             throw new \InvalidArgumentException('WebhookReceiver: webhookSecret is empty');
+        }
+        if ($appId === '') {
+            throw new \InvalidArgumentException('WebhookReceiver: appId is empty');
         }
     }
 
@@ -66,6 +75,25 @@ final class WebhookReceiver
         } catch (\Stripe\Exception\SignatureVerificationException $e) {
             error_log('WebhookReceiver: signature verification failed — ' . $e->getMessage());
             return new WebhookResult(400, ['error' => 'signature verification failed']);
+        }
+
+        // Ownership gate (shared Stripe accounts): every webhook endpoint on
+        // an account receives ALL events of its subscribed types, regardless
+        // of which app created the object. Ignore any event whose owning
+        // object isn't tagged with our app_id — a different app_id, or none at
+        // all, is "not ours" (binary; no DB fallback for absent app_id). Runs
+        // BEFORE the idempotency mark so co-tenant events never enter this
+        // consumer's event store. "Ignore" returns success (200) so Stripe
+        // stops retrying; nothing is read, written, or mutated. (SPEC #15.)
+        if ($this->isGatedType((string)$event->type)) {
+            $ownerAppId = $this->resolveOwnerAppId($event);
+            if ($ownerAppId !== $this->appId) {
+                error_log(
+                    'WebhookReceiver: ignoring foreign event ' . $event->id
+                    . ' (' . $event->type . ') app_id=' . ($ownerAppId ?? 'absent')
+                );
+                return new WebhookResult(200, ['received' => true, 'ignored' => true], ignored: true);
+            }
         }
 
         // Idempotency: mark the event id before doing work. If already
@@ -118,6 +146,77 @@ final class WebhookReceiver
                 error_log('WebhookReceiver: ignoring event type ' . $event->type);
                 return;
         }
+    }
+
+    /** Event types whose owning object we can attribute to an app. */
+    private function isGatedType(string $type): bool
+    {
+        return match ($type) {
+            'checkout.session.completed',
+            'customer.subscription.created',
+            'customer.subscription.updated',
+            'customer.subscription.deleted',
+            'customer.subscription.trial_will_end',
+            'invoice.paid',
+            'invoice.payment_failed' => true,
+            default                  => false,
+        };
+    }
+
+    /**
+     * The app_id of the object this event is about, or null if none can be
+     * resolved. checkout.session.* and customer.subscription.* carry metadata
+     * on the event object itself; invoice.* needs a little more work.
+     */
+    private function resolveOwnerAppId(Event $event): ?string
+    {
+        $obj = $event->data->object;
+        if ($obj instanceof Invoice) {
+            return $this->resolveInvoiceAppId($obj);
+        }
+        return $this->metaAppId($obj);
+    }
+
+    /** Read a non-empty metadata.app_id off any Stripe object, else null. */
+    private function metaAppId(object $obj): ?string
+    {
+        $appId = $obj->metadata->app_id ?? null;
+        return ($appId === null || $appId === '') ? null : (string)$appId;
+    }
+
+    /**
+     * Resolve the owning app_id for an invoice event, cheapest source first:
+     *   1. invoice.subscription_details.metadata — inline copy of the sub's
+     *      metadata Stripe puts on invoices (no API call).
+     *   2. invoice.metadata — the invoice's own metadata.
+     *   3. retrieve the subscription and read its metadata (last resort, one
+     *      Stripe API call).
+     */
+    private function resolveInvoiceAppId(Invoice $invoice): ?string
+    {
+        $inline = $invoice->subscription_details->metadata->app_id ?? null;
+        if ($inline !== null && $inline !== '') {
+            return (string)$inline;
+        }
+
+        $own = $invoice->metadata->app_id ?? null;
+        if ($own !== null && $own !== '') {
+            return (string)$own;
+        }
+
+        $sub_id = $invoice->subscription ?? null;
+        if ($sub_id) {
+            try {
+                $sub = StripeSubscription::retrieve((string)$sub_id);
+                return $this->metaAppId($sub);
+            } catch (\Throwable $e) {
+                error_log(
+                    'WebhookReceiver: invoice app_id retrieve failed '
+                    . '(invoice=' . ($invoice->id ?? '?') . ', sub=' . $sub_id . ') — ' . $e->getMessage()
+                );
+            }
+        }
+        return null;
     }
 
     private function handleCheckoutCompleted(CheckoutSession $session): void
